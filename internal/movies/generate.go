@@ -31,17 +31,20 @@ func NewGenerateService(tmdbClient *tmdb.Client, repo *Repository, actorsRepo *a
 // SearchForMovies mirrors MoviesGeneratorService.searchForMovies.
 func (g *GenerateService) SearchForMovies(ctx context.Context, movieName string) {
 	if strings.TrimSpace(movieName) == "" {
+		log.Printf("searchForMovies: blank title, ignoring")
 		return
 	}
+	log.Printf("searchForMovies: ordered %q — querying TMDB", movieName)
 
 	searchURL := g.tmdb.BaseURL + "/3/search/movie?api_key=" + url.QueryEscape(g.tmdb.APIKey) +
 		"&query=" + url.QueryEscape(movieName)
 
 	body, status, err := g.tmdb.Get(searchURL)
 	if err != nil {
-		log.Printf("searchForMovies(%q): %v", movieName, err)
+		log.Printf("searchForMovies(%q): TMDB request failed: %v", movieName, err)
 		return
 	}
+	log.Printf("searchForMovies(%q): TMDB responded status=%d", movieName, status)
 	g.processMovies(ctx, body, status)
 }
 
@@ -63,6 +66,7 @@ func (g *GenerateService) SearchForMovies(ctx context.Context, movieName string)
 // service it mirrors.
 func (g *GenerateService) processMovies(ctx context.Context, body map[string]any, status int) {
 	if status != 200 || body == nil {
+		log.Printf("processMovies: nothing to process (status=%d, empty body=%v)", status, body == nil)
 		return
 	}
 
@@ -72,6 +76,7 @@ func (g *GenerateService) processMovies(ctx context.Context, body map[string]any
 	} else {
 		results = []any{body}
 	}
+	log.Printf("processMovies: %d TMDB result(s) returned", len(results))
 
 	for _, elem := range results {
 		movieJSON := tmdb.AsObj(elem)
@@ -92,24 +97,31 @@ func (g *GenerateService) processOneMovie(ctx context.Context, movieJSON map[str
 	movieRating := tmdb.Str(movieJSON, "vote_average")
 
 	if strings.TrimSpace(posterIMG) == "" {
+		log.Printf("processOneMovie: skipping %q (tmdbId=%s): no poster image", title, movieID)
 		return
 	}
 	if strings.TrimSpace(releaseDate) == "" {
+		log.Printf("processOneMovie: skipping %q (tmdbId=%s): no release date", title, movieID)
 		return
 	}
 	parsedDate, err := time.Parse("2006-01-02", releaseDate)
 	if err != nil {
+		log.Printf("processOneMovie: skipping %q (tmdbId=%s): unparseable release date %q", title, movieID, releaseDate)
 		return
 	}
 	if parsedDate.After(time.Now()) {
+		log.Printf("processOneMovie: skipping %q (tmdbId=%s): not released yet (%s)", title, movieID, releaseDate)
 		return
 	}
 	if parsedDate.Year() < 2000 {
+		log.Printf("processOneMovie: skipping %q (tmdbId=%s): released before 2000 (%s)", title, movieID, releaseDate)
 		return
 	}
 	if movieRating == "0.0" {
+		log.Printf("processOneMovie: skipping %q (tmdbId=%s): TMDB rating is 0.0", title, movieID)
 		return
 	}
+	log.Printf("processOneMovie: %q (tmdbId=%s) passed initial checks, fetching cast/images/genres", title, movieID)
 
 	trailerURL := g.getTrailerFromAPI(movieID)
 
@@ -134,12 +146,15 @@ func (g *GenerateService) processOneMovie(ctx context.Context, movieJSON map[str
 	movie := &models.Movie{}
 	g.addAllCast(ctx, castActors, movie)
 	if len(castActors) == 0 {
+		log.Printf("processOneMovie: skipping %q (tmdbId=%s): no resolvable cast", title, movieID)
 		return
 	}
 	if !imagesOK {
+		log.Printf("processOneMovie: skipping %q (tmdbId=%s): fewer than 4 images", title, movieID)
 		return
 	}
 	if !genresOK {
+		log.Printf("processOneMovie: skipping %q (tmdbId=%s): no genres", title, movieID)
 		return
 	}
 
@@ -168,6 +183,7 @@ func (g *GenerateService) processOneMovie(ctx context.Context, movieJSON map[str
 		movie.SpecialText = &tagline
 	}
 
+	log.Printf("processOneMovie: %q (tmdbId=%s) ready to save (cast=%d, images=%d, genres=%q)", title, movieID, len(movie.CastList), len(movie.ImagesList), genres)
 	g.saveMovie(ctx, videoURL, movie)
 }
 
@@ -376,14 +392,16 @@ func (g *GenerateService) addAllCast(ctx context.Context, allCast []models.Actor
 func (g *GenerateService) saveMovie(ctx context.Context, videoURL string, movie *models.Movie) {
 	existingID, err := g.repo.FindByVideoURL(ctx, videoURL)
 	if err != nil {
-		log.Printf("saveMovie: findByVideoURL(%q): %v", videoURL, err)
+		log.Printf("saveMovie: findByVideoURL for %q: %v", movie.Title, err)
 		return
 	}
 	if existingID != nil {
+		log.Printf("saveMovie: %q already in catalog (id=%s), skipping", movie.Title, existingID)
 		return
 	}
 
 	resolvedIDs := make([]uuid.UUID, 0, len(movie.CastList))
+	newActors := 0
 	for i := range movie.CastList {
 		actor := &movie.CastList[i]
 		if actor.ID != uuid.Nil {
@@ -391,15 +409,19 @@ func (g *GenerateService) saveMovie(ctx context.Context, videoURL string, movie 
 			continue
 		}
 		if err := g.actorsRepo.Save(ctx, actor); err != nil {
-			log.Printf("saveMovie: persisting new actor %q: %v", actor.NameInRealLife, err)
+			log.Printf("saveMovie: persisting new actor %q for %q: %v", actor.NameInRealLife, movie.Title, err)
 			continue
 		}
+		newActors++
 		resolvedIDs = append(resolvedIDs, actor.ID)
 	}
+	log.Printf("saveMovie: %q — %d cast member(s) resolved (%d newly created), inserting movie", movie.Title, len(resolvedIDs), newActors)
 
 	if err := g.repo.InsertMovie(ctx, movie, resolvedIDs); err != nil {
-		log.Printf("saveMovie: insert movie %q: %v", movie.Title, err)
+		log.Printf("saveMovie: insert %q FAILED: %v", movie.Title, err)
+		return
 	}
+	log.Printf("saveMovie: %q added to the catalog", movie.Title)
 }
 
 // AddMoviesByActor mirrors MoviesGeneratorService.addMoviesByActor: resolve
@@ -410,36 +432,40 @@ func (g *GenerateService) saveMovie(ctx context.Context, videoURL string, movie 
 // verbatim rather than "fixed", since it's otherwise indistinguishable from
 // TMDB's real base URL in production.
 func (g *GenerateService) AddMoviesByActor(ctx context.Context, imdbID string) {
+	log.Printf("addMoviesByActor(%q): resolving TMDB person id", imdbID)
 	findURL := "https://api.themoviedb.org/3/find/" + url.QueryEscape(imdbID) +
 		"?external_source=imdb_id&api_key=" + url.QueryEscape(g.tmdb.APIKey)
 
 	findBody, status, err := g.tmdb.Get(findURL)
 	if err != nil || status != 200 || findBody == nil {
-		log.Printf("addMoviesByActor(%q): /find failed: %v", imdbID, err)
+		log.Printf("addMoviesByActor(%q): /find failed (status=%d): %v", imdbID, status, err)
 		return
 	}
 
 	personResults := tmdb.Arr(findBody, "person_results")
 	if len(personResults) == 0 {
-		log.Printf("No person found for imdbId = %s", imdbID)
+		log.Printf("addMoviesByActor(%q): no TMDB person found", imdbID)
 		return
 	}
 
 	firstPerson := tmdb.AsObj(personResults[0])
 	personID := tmdb.Str(firstPerson, "id")
+	personName := tmdb.Str(firstPerson, "name")
+	log.Printf("addMoviesByActor(%q): resolved %q (tmdbPersonId=%s), fetching movie credits", imdbID, personName, personID)
 
 	creditsURL := "https://api.themoviedb.org/3/person/" + personID + "/movie_credits?api_key=" + url.QueryEscape(g.tmdb.APIKey)
 	creditsBody, status, err := g.tmdb.Get(creditsURL)
 	if err != nil || status != 200 || creditsBody == nil {
-		log.Println("No cast movies found.")
+		log.Printf("addMoviesByActor(%q): no movie credits found (status=%d): %v", imdbID, status, err)
 		return
 	}
 
 	castMovies := tmdb.Arr(creditsBody, "cast")
 	if castMovies == nil {
-		log.Println("No cast movies found.")
+		log.Printf("addMoviesByActor(%q): no cast movies in credits response", imdbID)
 		return
 	}
+	log.Printf("addMoviesByActor(%q): %q has %d movie credit(s), processing each", imdbID, personName, len(castMovies))
 
 	for _, elem := range castMovies {
 		movieJSON := tmdb.AsObj(elem)
@@ -447,10 +473,12 @@ func (g *GenerateService) AddMoviesByActor(ctx context.Context, imdbID string) {
 			continue
 		}
 		movieID := tmdb.Str(movieJSON, "id")
+		movieTitle := tmdb.Str(movieJSON, "title")
 
 		movieURL := g.tmdb.URL("/3/movie/"+movieID, "")
 		body, status, err := g.tmdb.Get(movieURL)
 		if err != nil || status != 200 {
+			log.Printf("addMoviesByActor(%q): fetching credit %q (tmdbId=%s) failed (status=%d): %v", imdbID, movieTitle, movieID, status, err)
 			continue
 		}
 		g.processMovies(ctx, body, status)

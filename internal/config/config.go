@@ -19,12 +19,14 @@ type Config struct {
 
 func Load() Config {
 	return Config{
-		DatabaseURL:     os.Getenv("DATABASE_URL"),
-		DBUsername:      os.Getenv("DATABASE_USERNAME"),
-		DBPassword:      os.Getenv("DATABASE_PASSWORD"),
-		Port:            envOr("PORT", "8888"), // Java's server.port=8888
-		TMDBAPIKey:      os.Getenv("TMDB_API_KEY"),
-		TMDBBaseURL:     os.Getenv("TMDB_BASE_URL"),
+		DatabaseURL: os.Getenv("DATABASE_URL"),
+		DBUsername:  os.Getenv("DATABASE_USERNAME"),
+		DBPassword:  os.Getenv("DATABASE_PASSWORD"),
+		Port:        envOr("PORT", "8888"), // Java's server.port=8888
+		TMDBAPIKey:  os.Getenv("TMDB_API_KEY"),
+		// Not a secret (just TMDB's public API host) — default it so local
+		// dev doesn't need it set explicitly.
+		TMDBBaseURL:     envOr("TMDB_BASE_URL", "https://api.themoviedb.org"),
 		GrafanaEnabled:  os.Getenv("GRAFANA_OTLP_ENABLED") == "true",
 		GrafanaEndpoint: os.Getenv("GRAFANA_OTLP_ENDPOINT"),
 		GrafanaAuth:     os.Getenv("GRAFANA_OTLP_AUTH"),
