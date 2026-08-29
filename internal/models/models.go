@@ -53,10 +53,17 @@ type MovieImage struct {
 
 // Movie mirrors models.entities.Movie plus its CinemaRecord base class
 // fields, flattened. Note this entity's column set is a subset of the richer
-// Movie entity lumo-movies-svc reads (no tmdb_id/vidm_player/fmoon_player/
+// Movie entity lumo-movies-svc reads (no vidm_player/fmoon_player/
 // abs_player/vidme_player/players_checked columns — those belong to a
 // different Java service's schema additions and this one never touched
 // them), plus one column the *other* service doesn't have: video_urls.
+//
+// TmdbID (added post-rewrite, per the user): the original Java entity here
+// never had it, leaving every row this service inserted with a NULL
+// tmdb_id — the frontend then had to fall back to parsing the trailing
+// number off video_url, which breaks for any row missing that URL. This
+// service already extracts the real TMDB id (processOneMovie's movieID) for
+// every movie it saves, so it's captured here too instead of discarded.
 type Movie struct {
 	ID uuid.UUID
 
@@ -75,6 +82,7 @@ type Movie struct {
 
 	CastList    []Actor
 	VideoURL    string
+	TmdbID      *string
 	ImagesList  []MovieImage
 	TrailerURLs []string
 	VideoURLs   []string

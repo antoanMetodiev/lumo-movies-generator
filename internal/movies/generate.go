@@ -159,6 +159,7 @@ func (g *GenerateService) processOneMovie(ctx context.Context, movieJSON map[str
 	}
 
 	movie.VideoURL = videoURL
+	movie.TmdbID = &movieID
 	movie.SearchTag = title
 	movie.Title = title
 	if description != "" {

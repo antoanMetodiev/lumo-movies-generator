@@ -75,11 +75,11 @@ func (r *Repository) InsertMovie(ctx context.Context, m *models.Movie, castActor
 	_, err = tx.Exec(ctx, `
 		INSERT INTO movies (id, version, title, poster_img_url, trailer_url, special_text,
 			search_tag, genres, description, release_date, tmdb_rating, background_img_url, created_at,
-			video_url, trailer_urls, video_urls)
-		VALUES ($1,0,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+			video_url, tmdb_id, trailer_urls, video_urls)
+		VALUES ($1,0,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
 		m.ID, m.Title, m.PosterImgURL, m.TrailerURL, m.SpecialText,
 		m.SearchTag, m.Genres, m.Description, m.ReleaseDate, m.TmdbRating, m.BackgroundImgURL, m.CreatedAt,
-		m.VideoURL, encodeStringList(m.TrailerURLs), encodeStringList(m.VideoURLs),
+		m.VideoURL, m.TmdbID, encodeStringList(m.TrailerURLs), encodeStringList(m.VideoURLs),
 	)
 	if err != nil {
 		return err
